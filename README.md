@@ -27,27 +27,30 @@ Create a GitHub Personal Access Token with `repo` permissions:
 3. Select scope: `repo` (Full control of private repositories)
 4. Copy the generated token
 
-Set the token as an environment variable:
+**For Local Development:**
 
-**Windows (PowerShell):**
-```powershell
-$env:GITHUB_TOKEN = "your_github_personal_access_token_here"
+Create a `.env` file in the project root:
+```env
+GITHUB_TOKEN=your_github_personal_access_token_here
+GITHUB_REPO_OWNER=TSun-FreeFire
+GITHUB_REPO_NAME=TSun-FreeFire-Storage
+GITHUB_BRANCH=main
+GITHUB_BASE_PATH=Spam-api
 ```
 
-**Windows (CMD):**
-```cmd
-set GITHUB_TOKEN=your_github_personal_access_token_here
-```
+**For Vercel Deployment:**
 
-**Linux/Mac:**
-```bash
-export GITHUB_TOKEN="your_github_personal_access_token_here"
-```
+1. Go to your Vercel project → Settings → Environment Variables
+2. Add the following variables:
+   - `GITHUB_TOKEN` = your_github_personal_access_token
+   - `GITHUB_REPO_OWNER` = TSun-FreeFire
+   - `GITHUB_REPO_NAME` = TSun-FreeFire-Storage
+   - `GITHUB_BRANCH` = main
+   - `GITHUB_BASE_PATH` = Spam-api
 
-**Or use the alternative variable name `GPH`:**
-```powershell
-$env:GPH = "your_github_personal_access_token_here"
-```
+**Or use alternative environment variable names:**
+- `GPH` instead of `GITHUB_TOKEN`
+- `VERCEL_GITHUB_TOKEN` for Vercel deployments
 
 ### 3. Prepare Account Files
 
@@ -138,10 +141,29 @@ The script provides detailed logging:
 - 💀 Final failure messages after max retries
 - 🗑️ Cleanup confirmation messages
 
+## Deployment on Vercel
+
+1. **Push your code to GitHub**
+2. **Import project to Vercel:**
+   - Go to vercel.com and import your GitHub repository
+3. **Configure Environment Variables** in Vercel Dashboard:
+   - `GITHUB_TOKEN` = your_personal_access_token
+   - `GITHUB_REPO_OWNER` = TSun-FreeFire
+   - `GITHUB_REPO_NAME` = TSun-FreeFire-Storage
+   - `GITHUB_BRANCH` = main
+   - `GITHUB_BASE_PATH` = Spam-api
+4. **Deploy** - Vercel will automatically use `vercel.json` configuration
+
+**Note:** Vercel serverless functions have a 300-second timeout limit. For long-running tasks, consider using:
+- Vercel Cron Jobs
+- GitHub Actions (recommended for scheduled tasks)
+- Self-hosted deployment
+
 ## Troubleshooting
 
 **No GitHub token found:**
-- Ensure `GITHUB_TOKEN` or `GPH` environment variable is set
+- **Local:** Check `.env` file exists with `GITHUB_TOKEN`
+- **Vercel:** Verify environment variables in Vercel dashboard
 - Token must have `repo` permissions
 
 **Files not detected:**
@@ -152,6 +174,11 @@ The script provides detailed logging:
 - Verify token permissions
 - Check repository exists and is accessible
 - Ensure branch name is correct (default: `main`)
+
+**Vercel deployment issues:**
+- Check build logs in Vercel dashboard
+- Verify all environment variables are set
+- Ensure `vercel.json` is present in root directory
 
 ## Notes
 

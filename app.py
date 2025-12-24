@@ -15,7 +15,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich import box
 
-# Load environment variables from .env file
+# Load environment variables from .env file (local development)
+# Vercel will automatically inject environment variables from its settings
 load_dotenv()
 
 # Initialize Rich Console
@@ -66,11 +67,12 @@ MAX_CONCURRENT_REQUESTS = 100
 SCHEDULE_INTERVAL_HOURS = 6
 
 # --- GitHub Configuration ---
-GITHUB_TOKEN = os.getenv('GITHUB_TOKEN') or os.getenv('GPH')
-GITHUB_REPO_OWNER = "TSun-FreeFire"
-GITHUB_REPO_NAME = "TSun-FreeFire-Storage"
-GITHUB_BRANCH = "main"
-GITHUB_BASE_PATH = "Spam-api"
+# Supports both local .env and Vercel environment variables
+GITHUB_TOKEN = os.getenv('GITHUB_TOKEN') or os.getenv('GPH') or os.getenv('VERCEL_GITHUB_TOKEN')
+GITHUB_REPO_OWNER = os.getenv('GITHUB_REPO_OWNER', 'TSun-FreeFire')
+GITHUB_REPO_NAME = os.getenv('GITHUB_REPO_NAME', 'TSun-FreeFire-Storage')
+GITHUB_BRANCH = os.getenv('GITHUB_BRANCH', 'main')
+GITHUB_BASE_PATH = os.getenv('GITHUB_BASE_PATH', 'Spam-api')
 GITHUB_API_BASE = "https://api.github.com"
 
 # --- Retry Constants ---
