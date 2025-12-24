@@ -3,10 +3,7 @@
   "builds": [
     {
       "src": "app.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxDuration": 300
-      }
+      "use": "@vercel/python"
     }
   ],
   "routes": [
@@ -14,12 +11,5 @@
       "src": "/(.*)",
       "dest": "app.py"
     }
-  ],
-  "env": {
-    "GITHUB_TOKEN": "@github-token",
-    "GITHUB_REPO_OWNER": "TSun-FreeFire",
-    "GITHUB_REPO_NAME": "TSun-FreeFire-Storage",
-    "GITHUB_BRANCH": "main",
-    "GITHUB_BASE_PATH": "Spam-api"
-  }
+  ]
 }

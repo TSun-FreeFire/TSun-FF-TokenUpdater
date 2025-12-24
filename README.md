@@ -41,16 +41,22 @@ GITHUB_BASE_PATH=Spam-api
 **For Vercel Deployment:**
 
 1. Go to your Vercel project → Settings → Environment Variables
-2. Add the following variables:
-   - `GITHUB_TOKEN` = your_github_personal_access_token
-   - `GITHUB_REPO_OWNER` = TSun-FreeFire
-   - `GITHUB_REPO_NAME` = TSun-FreeFire-Storage
-   - `GITHUB_BRANCH` = main
-   - `GITHUB_BASE_PATH` = Spam-api
+2. Add the following variables (one by one):
+   
+   | Key | Value | Environment |
+   |-----|-------|-------------|
+   | `GITHUB_TOKEN` | your_github_personal_access_token | Production, Preview, Development |
+   | `GITHUB_REPO_OWNER` | TSun-FreeFire | Production, Preview, Development |
+   | `GITHUB_REPO_NAME` | TSun-FreeFire-Storage | Production, Preview, Development |
+   | `GITHUB_BRANCH` | main | Production, Preview, Development |
+   | `GITHUB_BASE_PATH` | Spam-api | Production, Preview, Development |
 
-**Or use alternative environment variable names:**
+3. **Important:** Do NOT use the secret syntax (`@secret-name`) in vercel.json - just add variables directly in dashboard
+4. Redeploy your project after adding variables
+
+**Alternative environment variable names:**
 - `GPH` instead of `GITHUB_TOKEN`
-- `VERCEL_GITHUB_TOKEN` for Vercel deployments
+- `VERCEL_GITHUB_TOKEN` for Vercel-specific deployments
 
 ### 3. Prepare Account Files
 
@@ -144,15 +150,27 @@ The script provides detailed logging:
 ## Deployment on Vercel
 
 1. **Push your code to GitHub**
+
 2. **Import project to Vercel:**
-   - Go to vercel.com and import your GitHub repository
+   - Go to [vercel.com](https://vercel.com) and import your GitHub repository
+
 3. **Configure Environment Variables** in Vercel Dashboard:
-   - `GITHUB_TOKEN` = your_personal_access_token
-   - `GITHUB_REPO_OWNER` = TSun-FreeFire
-   - `GITHUB_REPO_NAME` = TSun-FreeFire-Storage
-   - `GITHUB_BRANCH` = main
-   - `GITHUB_BASE_PATH` = Spam-api
+   - Navigate to: Project Settings → Environment Variables
+   - Add each variable from the `.env` file:
+     ```
+     GITHUB_TOKEN=ghp_your_token_here
+     GITHUB_REPO_OWNER=TSun-FreeFire
+     GITHUB_REPO_NAME=TSun-FreeFire-Storage
+     GITHUB_BRANCH=main
+     GITHUB_BASE_PATH=Spam-api
+     ```
+   - Select all environments: Production, Preview, Development
+
 4. **Deploy** - Vercel will automatically use `vercel.json` configuration
+
+**Common Issues:**
+- ❌ **Secret reference error:** Don't use `@secret-name` syntax in vercel.json
+- ✅ **Solution:** Add environment variables directly via Vercel dashboard
 
 **Note:** Vercel serverless functions have a 300-second timeout limit. For long-running tasks, consider using:
 - Vercel Cron Jobs
