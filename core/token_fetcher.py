@@ -15,8 +15,12 @@ from pathlib import Path
 from datetime import datetime
 
 # --- Configuration ---
+# Detect serverless environment
+IS_SERVERLESS = os.getenv('VERCEL') == '1'
+
+# Use /tmp for serverless, local paths otherwise
 ACCOUNTS_DIR = Path('accounts')
-TOKENS_DIR = Path('tokens')
+TOKENS_DIR = Path('/tmp/tokens') if IS_SERVERLESS else Path('tokens')
 
 # Multiple API URLs for fallback support
 API_URLS = [
@@ -130,9 +134,9 @@ async def fetch_token(session, uid, password, stats, pause_event, log_collector=
                     else:
                         api_index = (api_index + 1) % len(API_URLS)
                 
-                elif resp.status in [429, 500]:
+                elif resp.status == 429:
                     if log_collector and attempt == 0:
-                        log_collector.add(f"⚠️ Rate limit detected ({resp.status}) - pausing 5 seconds", "warning")
+                        log_collector.add(f"⚠️ Rate limit (429) on {uid} - pausing 5 seconds", "warning")
                     
                     rate_limit_manager = stats.get('rate_limit_manager')
                     if rate_limit_manager:
@@ -148,10 +152,18 @@ async def fetch_token(session, uid, password, stats, pause_event, log_collector=
                                 await asyncio.sleep(0.1)
                     
                     api_index = (api_index + 1) % len(API_URLS)
+                elif resp.status == 500:
+                    if log_collector and attempt == 0:
+                        log_collector.add(f"🔥 Server error (500) on {uid} - retrying...", "warning")
+                    api_index = (api_index + 1) % len(API_URLS)
                 else:
+                    if log_collector and attempt == 0:
+                        log_collector.add(f"❓ Unexpected status {resp.status} for {uid}", "warning")
                     api_index = (api_index + 1) % len(API_URLS)
         
-        except (aiohttp.ClientConnectorError, asyncio.TimeoutError, json.JSONDecodeError, Exception):
+        except (aiohttp.ClientConnectorError, asyncio.TimeoutError, json.JSONDecodeError, Exception) as e:
+            if log_collector and attempt == 0:
+                log_collector.add(f"🔌 Connection error for {uid}: {type(e).__name__}", "warning")
             api_index = (api_index + 1) % len(API_URLS)
         
         if attempt == MAX_RETRIES - 1:
@@ -160,6 +172,9 @@ async def fetch_token(session, uid, password, stats, pause_event, log_collector=
     elapsed = time.time() - start_time
     if elapsed > 120 and log_collector:
         log_collector.add(f"🐌 Slow account {uid}: {elapsed:.1f}s", "warning")
+    
+    if log_collector:
+        log_collector.add(f"❌ Failed to fetch token for {uid} after {MAX_RETRIES} attempts", "error")
     
     stats['failed'] += 1
     stats['completed'] += 1
@@ -268,6 +283,25 @@ async def process_region(session, account_filepath, stats, log_collector=None):
     rate_limit_manager = RateLimitManager()
     stats['rate_limit_manager'] = rate_limit_manager
     pause_event = asyncio.Event()
+    start_time = time.time()
+    
+    # Progress tracking
+    last_logged_progress = -1
+    
+    async def track_progress():
+        nonlocal last_logged_progress
+        while stats.get('completed', 0) < total:
+            completed = stats.get('completed', 0)
+            # Log every 10 accounts or at the very beginning
+            if completed % 10 == 0 and completed != last_logged_progress:
+                elapsed = time.time() - start_time
+                timer_str = f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
+                if log_collector:
+                    log_collector.add(f"PROGRESS:{region.upper()}:{completed}/{total}:{timer_str}", "info")
+                last_logged_progress = completed
+            await asyncio.sleep(1)
+
+    progress_task = asyncio.create_task(track_progress())
     
     tasks = [
         fetch_token_with_timeout(session, acc["uid"], acc["password"], stats, pause_event, log_collector, timeout=180)
@@ -283,12 +317,20 @@ async def process_region(session, account_filepath, stats, log_collector=None):
         if log_collector:
             log_collector.add(f"⏱️ {region.upper()} batch timeout after 20 minutes", "error")
         results = [None] * total
+    finally:
+        progress_task.cancel()
+        # Final progress log
+        elapsed = time.time() - start_time
+        timer_str = f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
+        if log_collector:
+            log_collector.add(f"PROGRESS:{region.upper()}:{total}/{total}:{timer_str}", "info")
     
+    duration = time.time() - start_time
     valid_tokens = [r for r in results if r is not None]
     timed_out_count = stats.get('timed_out', 0)
     
     # Save locally
-    TOKENS_DIR.mkdir(exist_ok=True)
+    TOKENS_DIR.mkdir(parents=True, exist_ok=True)
     token_filename = f'token_{region}.json'
     token_save_path = TOKENS_DIR / token_filename
     
@@ -319,14 +361,15 @@ async def process_region(session, account_filepath, stats, log_collector=None):
         'total': total,
         'success': len(valid_tokens),
         'failed': total - len(valid_tokens),
-        'success_rate': round((len(valid_tokens) / total) * 100, 1) if total > 0 else 0
+        'success_rate': round((len(valid_tokens) / total) * 100, 1) if total > 0 else 0,
+        'duration': round(duration, 2)
     }
 
 
-async def run_token_fetch(log_collector=None):
+async def run_token_fetch(log_collector=None, stats=None, on_region_complete=None):
     """Main token fetching function - runs once per invocation."""
     ACCOUNTS_DIR.mkdir(exist_ok=True)
-    TOKENS_DIR.mkdir(exist_ok=True)
+    TOKENS_DIR.mkdir(parents=True, exist_ok=True)
     
     account_files = sorted(list(ACCOUNTS_DIR.glob('accounts_*.json')))
     
@@ -339,7 +382,10 @@ async def run_token_fetch(log_collector=None):
         log_collector.add(f"📂 Found {len(account_files)} region files", "info")
     
     results = []
-    stats = {}
+    if stats is None:
+        stats = {}
+    else:
+        stats.clear() # Reset stats for new run
     start_time = time.time()
     
     connector = aiohttp.TCPConnector(limit=MAX_CONCURRENT_REQUESTS, ssl=False)
@@ -348,6 +394,13 @@ async def run_token_fetch(log_collector=None):
             region_result = await process_region(session, filepath, stats, log_collector)
             if region_result:
                 results.append(region_result)
+                # Trigger callback for incremental updates (e.g., database save)
+                if on_region_complete:
+                    try:
+                        on_region_complete(region_result)
+                    except Exception as e:
+                        if log_collector:
+                            log_collector.add(f"⚠️ Callback error: {str(e)}", "warning")
     
     elapsed = time.time() - start_time
     

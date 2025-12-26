@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TSun Token Fetcher | Cyberpunk Dashboard</title>
-    
+
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="alternate icon" href="/static/favicon.ico">
@@ -31,9 +31,9 @@
         </h1>
         <div style="display: flex; justify-content: center; margin-bottom: 32px;">
             <div class="nav-tabs">
-                <a href="#" class="nav-tab active">DASHBOARD</a>
-                <a href="/health" class="nav-tab">HEALTH</a>
-                <a href="#" class="nav-tab">DOCS</a>
+                <div onclick="showTab('dashboard')" class="nav-tab active" id="tab-link-dashboard">DASHBOARD</div>
+                <div onclick="showTab('health')" class="nav-tab" id="tab-link-health">HEALTH</div>
+                <div onclick="showTab('docs')" class="nav-tab" id="tab-link-docs">DOCS</div>
             </div>
         </div>
         <div
@@ -46,98 +46,242 @@
     </header>
 
     <main class="container">
-        <!-- Action Section -->
-        <section class="fade-in-up" style="animation-delay: 0.1s; margin-bottom: 40px; text-align: center;">
-            <button id="force-run-btn" class="btn-primary">
-                EXECUTE TOKEN REFRESH
-            </button>
-        </section>
+        <!-- Tab: Dashboard -->
+        <div id="tab-dashboard" class="tab-content active">
+            <!-- Action Section -->
+            <section class="fade-in-up" style="animation-delay: 0.1s; margin-bottom: 40px; text-align: center;">
+                <button id="force-run-btn" class="btn-primary">
+                    EXECUTE TOKEN REFRESH
+                </button>
+            </section>
 
-        <!-- Stats Grid -->
-        <section class="fade-in-up"
-            style="animation-delay: 0.2s; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin-bottom: 40px;">
-            <div class="glass-card">
-                <h3 style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px;">
-                    Success Rate</h3>
-                <div style="display: flex; align-items: baseline; gap: 8px;">
-                    <span id="success-count" style="font-size: 32px; color: var(--accent-cyan);">0</span>
-                    <span style="font-size: 14px; color: var(--text-muted);">tokens fetched</span>
-                </div>
-            </div>
-            <div class="glass-card">
-                <h3 style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px;">
-                    Failed Attempts</h3>
-                <div style="display: flex; align-items: baseline; gap: 8px;">
-                    <span id="failed-count" style="font-size: 32px; color: var(--accent-purple);">0</span>
-                    <span style="font-size: 14px; color: var(--text-muted);">errors logged</span>
-                </div>
-            </div>
-            <div class="glass-card">
-                <h3 style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px;">
-                    Performance</h3>
-                <div style="display: flex; align-items: baseline; gap: 8px;">
-                    <span id="speed-metric" style="font-size: 32px; color: var(--primary);">0.0</span>
-                    <span style="font-size: 14px; color: var(--text-muted);">req/sec</span>
-                </div>
-            </div>
-        </section>
-
-        <!-- Progress Section -->
-        <section id="progress-section" class="fade-in-up" style="display: none; margin-bottom: 40px;">
-            <div class="glass-card" style="border-color: var(--primary);">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                    <div>
-                        <h2 style="font-size: 18px; margin-bottom: 4px;">ACTIVE EXECUTION</h2>
-                        <p style="font-size: 12px; color: var(--text-muted);">PROCESSING: <span id="current-region"
-                                class="mono" style="color: var(--primary);">INITIALIZING</span></p>
+            <!-- Stats Grid -->
+            <section class="fade-in-up"
+                style="animation-delay: 0.2s; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin-bottom: 40px;">
+                <div class="glass-card">
+                    <h3
+                        style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px;">
+                        Success Rate</h3>
+                    <div style="display: flex; align-items: baseline; gap: 8px;">
+                        <span id="success-count" style="font-size: 32px; color: var(--accent-cyan);">0</span>
+                        <span style="font-size: 14px; color: var(--text-muted);">tokens fetched</span>
                     </div>
-                    <span id="progress-text" style="font-size: 24px; font-weight: 800;">0%</span>
                 </div>
-                <div class="progress-container">
-                    <div id="progress-bar" class="progress-bar"></div>
+                <div class="glass-card">
+                    <h3
+                        style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px;">
+                        Failed Attempts</h3>
+                    <div style="display: flex; align-items: baseline; gap: 8px;">
+                        <span id="failed-count" style="font-size: 32px; color: var(--accent-purple);">0</span>
+                        <span style="font-size: 14px; color: var(--text-muted);">errors logged</span>
+                    </div>
+                </div>
+                <div class="glass-card">
+                    <h3
+                        style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px;">
+                        Performance</h3>
+                    <div style="display: flex; align-items: baseline; gap: 8px;">
+                        <span id="speed-metric" style="font-size: 32px; color: var(--primary);">0.0</span>
+                        <span style="font-size: 14px; color: var(--text-muted);">req/sec</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Progress Section -->
+            <section id="progress-section" class="fade-in-up" style="display: none; margin-bottom: 40px;">
+                <div class="glass-card" style="border-color: var(--primary);">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                        <div>
+                            <h2 style="font-size: 18px; margin-bottom: 4px;">ACTIVE EXECUTION</h2>
+                            <p style="font-size: 12px; color: var(--text-muted);">PROCESSING: <span id="current-region"
+                                    class="mono" style="color: var(--primary);">INITIALIZING</span></p>
+                        </div>
+                        <span id="progress-text" style="font-size: 24px; font-weight: 800;">0%</span>
+                    </div>
+                    <div class="progress-container">
+                        <div id="progress-bar" class="progress-bar"></div>
+                    </div>
+                </div>
+            </section>
+
+            <div
+                style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 24px; margin-bottom: 80px;">
+                <!-- Terminal Logs -->
+                <section class="fade-in-up" style="animation-delay: 0.3s;">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                        <h3 style="font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em;">System Console
+                        </h3>
+                        <div class="spinner" style="width: 12px; height: 12px; border-width: 1px;"></div>
+                    </div>
+                    <div id="log-container" class="terminal">
+                        <div class="italic" style="color: var(--text-muted);">Establishing secure connection...</div>
+                    </div>
+                </section>
+
+                <!-- History -->
+                <section class="fade-in-up" style="animation-delay: 0.4s;">
+                    <h3 style="font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 16px;">
+                        Execution History</h3>
+                    <div class="glass-card" style="padding: 0; overflow: hidden;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                            <thead
+                                style="background: var(--bg-surface); text-align: left; color: var(--text-muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.1em;">
+                                <tr>
+                                    <th style="padding: 12px 16px;">Run ID</th>
+                                    <th style="padding: 12px 16px;">Region</th>
+                                    <th style="padding: 12px 16px;">Accounts</th>
+                                    <th style="padding: 12px 16px;">Success %</th>
+                                    <th style="padding: 12px 16px;">Duration</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-tbody">
+                                <tr>
+                                    <td colspan="5"
+                                        style="padding: 40px; text-align: center; color: var(--text-muted); font-style: italic;">
+                                        No historical data found
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- Tab: Health -->
+        <div id="tab-health" class="tab-content">
+            <div class="health-status-card healthy fade-in-up">
+                <div style="font-size: 48px; margin-bottom: 16px;">🟢</div>
+                <h2>SYSTEM HEALTHY</h2>
+                <p style="color: var(--text-muted); font-size: 14px;">Last Check: <span id="health-last-check"
+                        class="mono">--:--:--</span></p>
+            </div>
+
+            <div class="health-grid">
+                <div class="glass-card fade-in-up" style="animation-delay: 0.1s;">
+                    <h3 style="font-size: 14px; margin-bottom: 20px; color: var(--primary);">📦 ENVIRONMENT</h3>
+                    <div class="info-list">
+                        <div class="info-item">
+                            <span class="info-label">Mode</span>
+                            <span class="info-value" id="health-env-mode">--</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Python Version</span>
+                            <span class="info-value">3.10.x</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Platform</span>
+                            <span class="info-value" id="health-env-platform">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-card fade-in-up" style="animation-delay: 0.2s;">
+                    <h3 style="font-size: 14px; margin-bottom: 20px; color: var(--accent-cyan);">⚙️ CONFIGURATION</h3>
+                    <div class="info-list">
+                        <div class="info-item">
+                            <span class="info-label">Concurrent Requests</span>
+                            <span class="info-value" id="health-conf-concurrent">--</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Max Retries</span>
+                            <span class="info-value" id="health-conf-retries">--</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Account Timeout</span>
+                            <span class="info-value" id="health-conf-timeout">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-card fade-in-up" style="animation-delay: 0.3s;">
+                    <h3 style="font-size: 14px; margin-bottom: 20px; color: var(--accent-purple);">🔗 GITHUB INTEGRATION
+                    </h3>
+                    <div class="info-list">
+                        <div class="info-item">
+                            <span class="info-label">Status</span>
+                            <span class="info-value" id="health-github-status">--</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Repository</span>
+                            <span class="info-value" id="health-github-repo" style="font-size: 11px;">--</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Storage Path</span>
+                            <span class="info-value" id="health-github-path">--</span>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </section>
 
-        <div
-            style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 24px; margin-bottom: 80px;">
-            <!-- Terminal Logs -->
-            <section class="fade-in-up" style="animation-delay: 0.3s;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                    <h3 style="font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em;">System Console</h3>
-                    <div class="spinner" style="width: 12px; height: 12px; border-width: 1px;"></div>
+            <div class="glass-card fade-in-up" style="animation-delay: 0.4s; margin-top: 24px; margin-bottom: 80px;">
+                <h3 style="font-size: 14px; margin-bottom: 20px; color: var(--text-main);">🌐 API ENDPOINTS</h3>
+                <div id="health-api-list" class="info-list">
+                    <!-- API endpoints will be listed here -->
                 </div>
-                <div id="log-container" class="terminal">
-                    <div class="italic" style="color: var(--text-muted);">Establishing secure connection...</div>
-                </div>
-            </section>
+            </div>
+        </div>
 
-            <!-- History -->
-            <section class="fade-in-up" style="animation-delay: 0.4s;">
-                <h3 style="font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 16px;">
-                    Execution History</h3>
-                <div class="glass-card" style="padding: 0; overflow: hidden;">
-                    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-                        <thead
-                            style="background: var(--bg-surface); text-align: left; color: var(--text-muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.1em;">
-                            <tr>
-                                <th style="padding: 12px 16px;">Run ID</th>
-                                <th style="padding: 12px 16px;">Timestamp</th>
-                                <th style="padding: 12px 16px;">Success</th>
-                                <th style="padding: 12px 16px;">Duration</th>
-                            </tr>
-                        </thead>
-                        <tbody id="history-tbody">
-                            <tr>
-                                <td colspan="4"
-                                    style="padding: 40px; text-align: center; color: var(--text-muted); font-style: italic;">
-                                    No historical data found
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
+        <!-- Tab: Docs -->
+        <div id="tab-docs" class="tab-content">
+            <div class="docs-container fade-in-up">
+                <div class="docs-section">
+                    <h2><span style="color: var(--primary);">📚</span> API DOCUMENTATION</h2>
+
+                    <div class="api-endpoint">
+                        <div class="endpoint-header">
+                            <span class="method get">GET</span>
+                            <span class="method post">POST</span>
+                            <span class="url">/api/run</span>
+                        </div>
+                        <p class="description">Trigger the token fetch operation. In serverless mode, this will wait for
+                            completion. In local mode, it starts a background job.</p>
+                    </div>
+
+                    <div class="api-endpoint">
+                        <div class="endpoint-header">
+                            <span class="method get">GET</span>
+                            <span class="url">/api/status</span>
+                        </div>
+                        <p class="description">Get the current execution status, including progress, stats, and
+                            environment information.</p>
+                    </div>
+
+                    <div class="api-endpoint">
+                        <div class="endpoint-header">
+                            <span class="method get">GET</span>
+                            <span class="url">/api/logs</span>
+                        </div>
+                        <p class="description">Stream live logs using Server-Sent Events (SSE) in local mode, or get
+                            recent logs as JSON in serverless mode.</p>
+                    </div>
+
+                    <div class="api-endpoint">
+                        <div class="endpoint-header">
+                            <span class="method get">GET</span>
+                            <span class="url">/api/history</span>
+                        </div>
+                        <p class="description">Retrieve the execution history of the last 10 runs.</p>
+                    </div>
                 </div>
-            </section>
+
+                <div class="docs-section" style="margin-bottom: 80px;">
+                    <h2><span style="color: var(--accent-cyan);">⏰</span> CRON SETUP</h2>
+                    <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 16px;">
+                        To automate token refreshing, set up a cron job (e.g., using GitHub Actions or EasyCron) to call
+                        the run endpoint:
+                    </p>
+                    <div class="cron-box">
+                        https://yourlink.com/api/run
+                    </div>
+                    <div style="margin-top: 20px; font-size: 13px; color: var(--text-muted);">
+                        <p><strong>Recommended Schedule:</strong> Every 6 hours</p>
+                        <p class="mono" style="margin-top: 8px; color: var(--primary);">0 */6 * * *</p>
+                    </div>
+                </div>
+            </div>
         </div>
     </main>
 

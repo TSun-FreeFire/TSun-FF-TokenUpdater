@@ -13,9 +13,13 @@ import os
 from pathlib import Path
 from datetime import datetime, timedelta
 from core.token_fetcher import run_token_fetch, LogCollector
+import db
 
 # Load environment variables
 load_dotenv()
+
+# Initialize Database
+db.init_db()
 
 # Detect serverless environment (Vercel)
 IS_SERVERLESS = os.getenv('VERCEL') == '1' or os.getenv('AWS_LAMBDA_FUNCTION_NAME') is not None
@@ -33,35 +37,18 @@ job_state = {
     'is_serverless': IS_SERVERLESS
 }
 
-# Use /tmp for serverless, data/ for local
-HISTORY_DIR = Path('/tmp') if IS_SERVERLESS else Path('data')
-HISTORY_FILE = HISTORY_DIR / 'run_history.json'
-
-
 def load_history():
-    """Load run history from file."""
-    HISTORY_FILE.parent.mkdir(exist_ok=True)
-    if HISTORY_FILE.exists():
-        try:
-            with open(HISTORY_FILE, 'r') as f:
-                data = json.load(f)
-                job_state['history'] = data.get('runs', [])[-10:]  # Keep last 10
-                job_state['last_run'] = data.get('last_run')
-        except Exception:
-            pass
-
-
-def save_history():
-    """Save run history to file."""
-    HISTORY_FILE.parent.mkdir(exist_ok=True)
-    try:
-        with open(HISTORY_FILE, 'w') as f:
-            json.dump({
-                'runs': job_state['history'][-10:],
-                'last_run': job_state['last_run']
-            }, f, indent=2)
-    except Exception:
-        pass
+    """Load run history from database only."""
+    # Load from Neon database
+    db_history = db.get_history(limit=10)
+    if db_history:
+        job_state['history'] = db_history
+        if db_history:
+            job_state['last_run'] = db_history[0]
+    else:
+        # Initialize empty if no database history
+        job_state['history'] = []
+        job_state['last_run'] = None
 
 
 def run_sync_job():
@@ -71,16 +58,24 @@ def run_sync_job():
         'started_at': datetime.now().isoformat(),
         'run_number': len(job_state['history']) + 1
     }
-    job_state['stats'] = {
-        'completed': 0,
-        'total': 0,
-        'success': 0,
-        'failed': 0,
-        'timed_out': 0,
-        'current_region': 'Initializing...'
-    }
     job_state['log_collector'].add("🚀 Starting new token fetch run (serverless mode)", "info")
     
+    # Save to Database at START
+    run_id = db.save_run(
+        job_state['current_run']['run_number'], 
+        job_state['current_run']['started_at'],
+        'running'
+    )
+    
+    def on_region_complete(region_result):
+        if run_id:
+            db.save_region_result(
+                run_id, region_result['region'], region_result['total'], 
+                region_result['success'], region_result['failed'], 
+                region_result.get('timed_out', 0), region_result['success_rate'], 
+                region_result['duration']
+            )
+
     # Run async task with timeout
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -88,7 +83,10 @@ def run_sync_job():
     try:
         # Serverless timeout: 50 seconds max
         result = loop.run_until_complete(
-            asyncio.wait_for(run_token_fetch(job_state['log_collector']), timeout=50)
+            asyncio.wait_for(
+                run_token_fetch(job_state['log_collector'], job_state['stats'], on_region_complete), 
+                timeout=50
+            )
         )
         
         # Update state
@@ -100,21 +98,26 @@ def run_sync_job():
             'elapsed': result.get('elapsed', 0)
         }
         
-        # Add to history
-        job_state['history'].append(job_state['last_run'])
-        save_history()
-        
+        # Update run completion in Database
+        if run_id:
+            db.update_run_completion(run_id, job_state['last_run']['completed_at'], job_state['last_run']['elapsed'])
+
+        # History is managed by database, no need to append to state
         job_state['current_run'] = None
         
         return {'status': 'completed', 'result': result}
         
     except asyncio.TimeoutError:
         job_state['status'] = 'timeout'
+        if run_id:
+            db.update_run_completion(run_id, datetime.now().isoformat(), 50, 'timeout')
         job_state['log_collector'].add("⏱️ Serverless timeout (50s) - partial results saved", "warning")
         return {'status': 'timeout', 'message': 'Execution timed out after 50s'}
     
     except Exception as e:
         job_state['status'] = 'error'
+        if run_id:
+            db.update_run_completion(run_id, datetime.now().isoformat(), 0, 'error')
         job_state['log_collector'].add(f"❌ Critical error: {str(e)}", "error")
         return {'status': 'error', 'message': str(e)}
     
@@ -130,22 +133,32 @@ def run_async_job():
             'started_at': datetime.now().isoformat(),
             'run_number': len(job_state['history']) + 1
         }
-        job_state['stats'] = {
-            'completed': 0,
-            'total': 0,
-            'success': 0,
-            'failed': 0,
-            'timed_out': 0,
-            'current_region': 'Initializing...'
-        }
         job_state['log_collector'].add("🚀 Starting new token fetch run", "info")
         
+        # Save to Database at START
+        run_id = db.save_run(
+            job_state['current_run']['run_number'], 
+            job_state['current_run']['started_at'],
+            'running'
+        )
+        
+        def on_region_complete(region_result):
+            if run_id:
+                db.save_region_result(
+                    run_id, region_result['region'], region_result['total'], 
+                    region_result['success'], region_result['failed'], 
+                    region_result.get('timed_out', 0), region_result['success_rate'], 
+                    region_result['duration']
+                )
+
         # Run async task
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         try:
-            result = loop.run_until_complete(run_token_fetch(job_state['log_collector']))
+            result = loop.run_until_complete(
+                run_token_fetch(job_state['log_collector'], job_state['stats'], on_region_complete)
+            )
             
             # Update state
             job_state['status'] = 'completed'
@@ -156,14 +169,17 @@ def run_async_job():
                 'elapsed': result.get('elapsed', 0)
             }
             
-            # Add to history
-            job_state['history'].append(job_state['last_run'])
-            save_history()
-            
+            # Update run completion in Database
+            if run_id:
+                db.update_run_completion(run_id, job_state['last_run']['completed_at'], job_state['last_run']['elapsed'])
+
+            # History is managed by database, no need to append to state
             job_state['current_run'] = None
             
         except Exception as e:
             job_state['status'] = 'error'
+            if run_id:
+                db.update_run_completion(run_id, datetime.now().isoformat(), 0, 'error')
             job_state['log_collector'].add(f"❌ Critical error: {str(e)}", "error")
         finally:
             loop.close()
@@ -200,11 +216,14 @@ def trigger_run():
 @app.route('/api/status')
 def get_status():
     """Get current job status."""
+    # Filter out non-serializable objects from stats
+    serializable_stats = {k: v for k, v in job_state['stats'].items() if k != 'rate_limit_manager'}
+    
     return jsonify({
         'status': job_state['status'],
         'current_run': job_state['current_run'],
         'last_run': job_state['last_run'],
-        'stats': job_state['stats'],
+        'stats': serializable_stats,
         'is_serverless': IS_SERVERLESS,
         'mode': 'serverless' if IS_SERVERLESS else 'local'
     })
@@ -241,7 +260,14 @@ def stream_logs():
 
 @app.route('/api/history')
 def get_history():
-    """Get run history."""
+    """Get run history from database or state."""
+    db_history = db.get_history(limit=10)
+    if db_history:
+        return jsonify({
+            'history': db_history,
+            'last_run': db_history[0] if db_history else None
+        })
+        
     return jsonify({
         'history': job_state['history'][-10:],
         'last_run': job_state['last_run']
@@ -250,8 +276,29 @@ def get_history():
 
 @app.route('/health')
 def health():
-    """Health check endpoint."""
-    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
+    """Enhanced health check endpoint."""
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "environment": "serverless" if IS_SERVERLESS else "local",
+        "github": {
+            "configured": bool(os.getenv('GITHUB_TOKEN') or os.getenv('GPH') or os.getenv('VERCEL_GITHUB_TOKEN')),
+            "repo": f"{os.getenv('GITHUB_REPO_OWNER', 'TSun-FreeFire')}/{os.getenv('GITHUB_REPO_NAME', 'TSun-FreeFire-Storage')}",
+            "path": os.getenv('GITHUB_BASE_PATH', 'Spam-api')
+        },
+        "api_endpoints": [
+            "https://jwt.tsunstudio.pw/v1/auth/saeed",
+            "https://tsun-ff-jwt-api.onrender.com/v1/auth/saeed",
+            "https://jwt-tsunstudio.onrender.com/v1/auth/saeed"
+        ],
+        "configuration": {
+            "max_concurrent": 100,
+            "max_retries": 15,
+            "timeout_per_account": "180s",
+            "batch_timeout": "1200s"
+        },
+        "last_run": job_state['last_run']
+    })
 
 
 # Load history on startup

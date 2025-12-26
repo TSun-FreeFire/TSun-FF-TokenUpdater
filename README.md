@@ -51,7 +51,27 @@ npm i -g vercel
 vercel --prod
 ```
 
-### 2. Configure Environment Variables in Vercel
+### 2. Setup Neon PostgreSQL Database (Execution History)
+
+**Create a free Neon database:**
+1. Go to [neon.tech](https://neon.tech) and sign up (free tier available)
+2. Click "Create Project"
+3. Name your project (e.g., "TSun Token Fetcher")
+4. Select a region closest to your Vercel deployment
+5. Click "Create Project"
+
+**Initialize the database schema:**
+1. In Neon dashboard, go to your project → **SQL Editor**
+2. Copy the contents of `schema.sql` from this repository
+3. Paste into the SQL Editor and click "Run"
+4. Verify tables were created:
+   ```sql
+   SELECT table_name FROM information_schema.tables 
+   WHERE table_schema = 'public' AND table_name IN ('runs', 'region_results');
+   ```
+5. Copy your **Database Connection String** from Neon dashboard (format: `postgresql://user:password@host/database`)
+
+### 3. Configure Environment Variables in Vercel
 
 Create a GitHub Personal Access Token with `repo` permissions:
 1. Go to GitHub Settings → Developer Settings → Personal Access Tokens → Tokens (classic)
@@ -64,21 +84,16 @@ Create a GitHub Personal Access Token with `repo` permissions:
 
 | Key | Value | Description |
 |-----|-------|-------------|
+| `DATABASE_URL` | `postgresql://user:pass@host/db?sslmode=require` | Neon database connection string |
 | `GITHUB_TOKEN` | `ghp_your_token_here` | GitHub Personal Access Token |
 | `GITHUB_REPO_OWNER` | `Github_Username` | Repository owner |
 | `GITHUB_REPO_NAME` | `repo_name` | Repository name |
 | `GITHUB_BRANCH` | `main` | Target branch |
 | `GITHUB_BASE_PATH` | `folder_name` | Path in repo |
 
-**How to get GitHub Token:**
-1. Go to GitHub Settings → Developer Settings → Personal Access Tokens → Tokens (classic)
-2. Click "Generate new token (classic)"
-3. Select scope: `repo` (Full control of private repositories)
-4. Copy the generated token
-
 3. Click "Redeploy" in Vercel dashboard
 
-### 3. Upload Account Files
+### 4. Upload Account Files
 
 Your account files should already be in the `accounts/` folder:
 
@@ -107,7 +122,7 @@ Place your account JSON files in the `accounts/` folder with the naming pattern:
 
 Make sure they're committed to your GitHub repository.
 
-### 4. Setup Free Auto-Scheduling (cron-job.org)
+### 5. Setup Free Auto-Scheduling (cron-job.org)
 
 **This step enables automatic execution every 6 hours:**
 
@@ -124,16 +139,57 @@ Make sure they're committed to your GitHub repository.
 
 **That's it!** Your token fetcher will now run automatically every 6 hours. ✅
 
-### 5. Access Your Dashboard
+### 6. Access Your Dashboard
 
 Visit `https://your-app-name.vercel.app` to see the **premium cyberpunk dashboard** with:
 - 🔥 **Fire-orange accents** with glassmorphic cards
 - 📊 **Real-time progress bars** with gradient effects
 - 📜 **Terminal-style live logs** with color coding
-- 📈 **Run history** with success rate tracking
+- 📈 **Run history** with success rate tracking (stored in Neon database)
 - ⚡ **Performance metrics** (speed, success rate, failures)
 - 🚀 **Manual "Execute Now"** button for testing
 - 🎨 **Premium dark theme** with mesh gradient background
+
+**Note:** The execution history table displays real data from your Neon database. Each run is automatically saved with detailed region-wise statistics.
+
+---
+
+## 📊 Database Schema
+
+The application uses Neon PostgreSQL to store execution history:
+
+### Tables
+
+**runs** - Stores execution metadata
+- `id` (Primary Key)
+- `run_number` - Sequential run number
+- `started_at` - Execution start timestamp
+- `completed_at` - Execution completion timestamp
+- `total_duration_seconds` - Total run duration
+- `status` - Run status (running, completed, timeout, error)
+
+**region_results** - Stores per-region results
+- `id` (Primary Key)
+- `run_id` (Foreign Key → runs.id)
+- `region` - Region code (BD, IND, PK)
+- `total_accounts` - Total accounts processed
+- `success_count` - Successful token fetches
+- `failed_count` - Failed attempts
+- `timed_out_count` - Timed out requests
+- `success_rate` - Success percentage
+- `duration_seconds` - Region processing duration
+
+### Querying History
+
+```sql
+-- Get last 10 runs with region details
+SELECT r.run_number, r.started_at, r.status,
+       rr.region, rr.total_accounts, rr.success_rate
+FROM runs r
+JOIN region_results rr ON r.id = rr.run_id
+ORDER BY r.started_at DESC
+LIMIT 10;
+```
 
 ---
 
@@ -145,14 +201,26 @@ To run the dashboard locally for testing:
 # Install dependencies
 pip install -r requirements.txt
 
-# Create .env file with your GitHub token
-echo "GITHUB_TOKEN=ghp_your_token_here" > .env
+# Create .env file with credentials
+cat > .env << EOF
+DATABASE_URL=postgresql://user:pass@host/database?sslmode=require
+GITHUB_TOKEN=ghp_your_token_here
+GITHUB_REPO_OWNER=Your-Username
+GITHUB_REPO_NAME=Your-Repo
+GITHUB_BRANCH=main
+GITHUB_BASE_PATH=Spam-api
+EOF
 
 # Run the Flask app
 python web_app.py
 ```
 
 Visit `http://localhost:5000` to see the dashboard.
+
+**Local Database Setup:**
+- The app will automatically create tables using `db.init_db()` on startup
+- Make sure your `DATABASE_URL` in `.env` is correct
+- Tables will be created if they don't exist
 
 ---
 
