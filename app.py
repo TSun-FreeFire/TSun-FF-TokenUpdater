@@ -3,13 +3,14 @@ Flask web application for TSun Token Fetcher Dashboard.
 Provides a beautiful web interface with real-time updates.
 """
 
-from flask import Flask, render_template, jsonify, Response
+from flask import Flask, render_template, jsonify, Response, request
 from dotenv import load_dotenv
 import asyncio
 import threading
 import json
 import time
 import os
+import logging
 from pathlib import Path
 from datetime import datetime, timedelta
 from core.token_fetcher import run_token_fetch, LogCollector
@@ -24,6 +25,14 @@ db.init_db()
 # Detect serverless environment (Vercel)
 IS_SERVERLESS = os.getenv('VERCEL') == '1' or os.getenv('AWS_LAMBDA_FUNCTION_NAME') is not None
 
+# Security settings
+RUN_ENABLED = os.getenv('RUN_ENABLED', 'false').lower() == 'true'
+SECRET_TOKEN = os.getenv('RUN_SECRET_TOKEN', 'change-me-in-vercel-env')
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 
 # Global state
@@ -31,32 +40,26 @@ job_state = {
     'status': 'idle',  # idle, running, completed
     'current_run': None,
     'last_run': None,
-    'history': [],
     'stats': {},
     'log_collector': LogCollector(),
     'is_serverless': IS_SERVERLESS
 }
 
-def load_history():
-    """Load run history from database only."""
-    # Load from Neon database
-    db_history = db.get_history(limit=10)
-    if db_history:
-        job_state['history'] = db_history
-        if db_history:
-            job_state['last_run'] = db_history[0]
-    else:
-        # Initialize empty if no database history
-        job_state['history'] = []
-        job_state['last_run'] = None
-
 
 def run_sync_job():
     """Run token fetch synchronously (for serverless environments)."""
+    # Clear logs from previous run
+    job_state['log_collector'].clear()
+    
     job_state['status'] = 'running'
+    
+    # Get next run number from database
+    db_history = db.get_history(limit=1)
+    next_run_number = (db_history[0]['run_number'] + 1) if db_history else 1
+    
     job_state['current_run'] = {
         'started_at': datetime.now().isoformat(),
-        'run_number': len(job_state['history']) + 1
+        'run_number': next_run_number
     }
     job_state['log_collector'].add("🚀 Starting new token fetch run (serverless mode)", "info")
     
@@ -102,8 +105,10 @@ def run_sync_job():
         if run_id:
             db.update_run_completion(run_id, job_state['last_run']['completed_at'], job_state['last_run']['elapsed'])
 
-        # History is managed by database, no need to append to state
         job_state['current_run'] = None
+        
+        # Clear logs after completion (ephemeral logs)
+        job_state['log_collector'].add("✅ Run completed - logs will be cleared", "success")
         
         return {'status': 'completed', 'result': result}
         
@@ -112,6 +117,10 @@ def run_sync_job():
         if run_id:
             db.update_run_completion(run_id, datetime.now().isoformat(), 50, 'timeout')
         job_state['log_collector'].add("⏱️ Serverless timeout (50s) - partial results saved", "warning")
+        
+        # Clear logs after timeout
+        job_state['log_collector'].add("⏱️ Timeout - logs will be cleared", "warning")
+        
         return {'status': 'timeout', 'message': 'Execution timed out after 50s'}
     
     except Exception as e:
@@ -119,6 +128,10 @@ def run_sync_job():
         if run_id:
             db.update_run_completion(run_id, datetime.now().isoformat(), 0, 'error')
         job_state['log_collector'].add(f"❌ Critical error: {str(e)}", "error")
+        
+        # Clear logs after error
+        job_state['log_collector'].add("❌ Error - logs will be cleared", "error")
+        
         return {'status': 'error', 'message': str(e)}
     
     finally:
@@ -128,10 +141,18 @@ def run_sync_job():
 def run_async_job():
     """Run token fetch in background thread (for local development)."""
     def async_wrapper():
+        # Clear logs from previous run
+        job_state['log_collector'].clear()
+        
         job_state['status'] = 'running'
+        
+        # Get next run number from database
+        db_history = db.get_history(limit=1)
+        next_run_number = (db_history[0]['run_number'] + 1) if db_history else 1
+        
         job_state['current_run'] = {
             'started_at': datetime.now().isoformat(),
-            'run_number': len(job_state['history']) + 1
+            'run_number': next_run_number
         }
         job_state['log_collector'].add("🚀 Starting new token fetch run", "info")
         
@@ -173,19 +194,29 @@ def run_async_job():
             if run_id:
                 db.update_run_completion(run_id, job_state['last_run']['completed_at'], job_state['last_run']['elapsed'])
 
-            # History is managed by database, no need to append to state
             job_state['current_run'] = None
+            
+            # Clear logs after completion (ephemeral logs)
+            job_state['log_collector'].add("✅ Run completed - logs will be cleared", "success")
             
         except Exception as e:
             job_state['status'] = 'error'
             if run_id:
                 db.update_run_completion(run_id, datetime.now().isoformat(), 0, 'error')
             job_state['log_collector'].add(f"❌ Critical error: {str(e)}", "error")
+            
+            # Clear logs after error
+            job_state['log_collector'].add("❌ Error - logs will be cleared", "error")
+            
         finally:
             loop.close()
             # Reset to idle after 10 seconds
             time.sleep(10)
             job_state['status'] = 'idle'
+            
+            # Clear logs after run finishes (ephemeral logs)
+            time.sleep(2)  # Brief delay to show final message
+            job_state['log_collector'].clear()
     
     thread = threading.Thread(target=async_wrapper, daemon=True)
     thread.start()
@@ -200,6 +231,45 @@ def dashboard():
 @app.route('/api/run', methods=['GET', 'POST'])
 def trigger_run():
     """Trigger a token fetch (called by cron or manual button)."""
+    
+    # ========== SECURITY & LOGGING ==========
+    # Log every request to track who's triggering runs
+    logger.warning(f"""
+    ========== RUN TRIGGERED ==========
+    Time: {datetime.now().isoformat()}
+    Method: {request.method}
+    IP: {request.remote_addr}
+    User-Agent: {request.headers.get('User-Agent', 'Unknown')}
+    Referer: {request.headers.get('Referer', 'None')}
+    Origin: {request.headers.get('Origin', 'None')}
+    Query Params: {dict(request.args)}
+    Headers: X-Run-Token present: {bool(request.headers.get('X-Run-Token'))}
+    ===================================
+    """)
+    
+    # Check if runs are enabled (kill switch)
+    if not RUN_ENABLED:
+        logger.warning("⛔ Run attempt blocked - RUN_ENABLED is False")
+        return jsonify({
+            'error': 'Runs disabled',
+            'message': 'Execution is currently disabled. Set RUN_ENABLED=true in environment variables to enable.',
+            'tip': 'This prevents unauthorized automatic executions.'
+        }), 503
+    
+    # Check authentication token
+    provided_token = request.headers.get('X-Run-Token') or request.args.get('token')
+    
+    if provided_token != SECRET_TOKEN:
+        logger.warning(f"🔒 Unauthorized run attempt from IP: {request.remote_addr}")
+        return jsonify({
+            'error': 'Unauthorized',
+            'message': 'Valid authentication token required to trigger run.',
+            'tip': 'Add X-Run-Token header or ?token=your-secret query parameter'
+        }), 401
+    
+    logger.info(f"✅ Authorized run request from IP: {request.remote_addr}")
+    
+    # ========== EXECUTE RUN ==========
     if job_state['status'] == 'running':
         return jsonify({'status': 'already_running'}), 409
     
@@ -260,17 +330,21 @@ def stream_logs():
 
 @app.route('/api/history')
 def get_history():
-    """Get run history from database or state."""
+    """Get run history from database only (no browser/in-memory storage)."""
     db_history = db.get_history(limit=10)
-    if db_history:
-        return jsonify({
-            'history': db_history,
-            'last_run': db_history[0] if db_history else None
-        })
-        
     return jsonify({
-        'history': job_state['history'][-10:],
-        'last_run': job_state['last_run']
+        'history': db_history,
+        'last_run': db_history[0] if db_history else None
+    })
+
+
+@app.route('/api/config')
+def get_config():
+    """Get public configuration (for frontend to know if auth is required)."""
+    return jsonify({
+        'run_enabled': RUN_ENABLED,
+        'auth_required': True,
+        'message': 'Authentication token required for /api/run endpoint'
     })
 
 
@@ -281,6 +355,10 @@ def health():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "environment": "serverless" if IS_SERVERLESS else "local",
+        "security": {
+            "run_enabled": RUN_ENABLED,
+            "auth_required": True
+        },
         "github": {
             "configured": bool(os.getenv('GITHUB_TOKEN') or os.getenv('GPH') or os.getenv('VERCEL_GITHUB_TOKEN')),
             "repo": f"{os.getenv('GITHUB_REPO_OWNER', 'TSun-FreeFire')}/{os.getenv('GITHUB_REPO_NAME', 'TSun-FreeFire-Storage')}",
@@ -299,10 +377,6 @@ def health():
         },
         "last_run": job_state['last_run']
     })
-
-
-# Load history on startup
-load_history()
 
 
 if __name__ == '__main__':

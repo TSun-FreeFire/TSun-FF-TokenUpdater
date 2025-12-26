@@ -90,6 +90,8 @@ Create a GitHub Personal Access Token with `repo` permissions:
 | `GITHUB_REPO_NAME` | `repo_name` | Repository name |
 | `GITHUB_BRANCH` | `main` | Target branch |
 | `GITHUB_BASE_PATH` | `folder_name` | Path in repo |
+| `RUN_ENABLED` | `true` | **IMPORTANT**: Set to `true` to allow executions (kill switch) |
+| `RUN_SECRET_TOKEN` | `your-strong-random-string` | **SECURITY**: Secret token to authenticate run requests |
 
 3. Click "Redeploy" in Vercel dashboard
 

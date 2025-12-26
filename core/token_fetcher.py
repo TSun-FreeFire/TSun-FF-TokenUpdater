@@ -22,14 +22,17 @@ IS_SERVERLESS = os.getenv('VERCEL') == '1'
 ACCOUNTS_DIR = Path('accounts')
 TOKENS_DIR = Path('/tmp/tokens') if IS_SERVERLESS else Path('tokens')
 
-# Multiple API URLs for fallback support
+# Multiple API URLs - now used for DISTRIBUTION (not fallback)
 API_URLS = [
     "https://jwt.tsunstudio.pw/v1/auth/saeed?uid={uid}&password={password}",
     "https://tsun-ff-jwt-api.onrender.com/v1/auth/saeed?uid={uid}&password={password}",
     "https://jwt-tsunstudio.onrender.com/v1/auth/saeed?uid={uid}&password={password}"
 ]
 
-MAX_CONCURRENT_REQUESTS = 100
+# Rate-limit optimized configuration
+MAX_CONCURRENT_PER_API = 30  # Concurrent requests per API (reduced from 100 total)
+BATCH_SIZE = 30              # Process accounts in batches
+BATCH_DELAY = 2.0            # Seconds to wait between batches
 MAX_RETRIES = 15
 INITIAL_DELAY = 5
 MAX_DELAY = 120
@@ -87,11 +90,11 @@ class LogCollector:
         self.logs = []
 
 
-async def fetch_token_with_timeout(session, uid, password, stats, pause_event, log_collector=None, timeout=180):
+async def fetch_token_with_timeout(session, uid, password, api_url, api_name, stats, pause_event, log_collector=None, timeout=180):
     """Wrapper to enforce per-account timeout."""
     try:
         return await asyncio.wait_for(
-            fetch_token(session, uid, password, stats, pause_event, log_collector),
+            fetch_token(session, uid, password, api_url, api_name, stats, pause_event, log_collector),
             timeout=timeout
         )
     except asyncio.TimeoutError:
@@ -99,15 +102,94 @@ async def fetch_token_with_timeout(session, uid, password, stats, pause_event, l
         stats['completed'] += 1
         stats['timed_out'] = stats.get('timed_out', 0) + 1
         if log_collector:
-            log_collector.add(f"⏱️ Account {uid} timed out after {timeout}s", "warning")
+            log_collector.add(f"⏱️ {api_name}: Account {uid} timed out after {timeout}s", "warning")
         return None
 
 
-async def fetch_token(session, uid, password, stats, pause_event, log_collector=None):
-    """Fetches a single JWT token with multi-API fallback."""
+def distribute_accounts_across_apis(accounts):
+    """
+    Distributes accounts evenly across all 3 APIs.
+    Returns list of (api_url, api_name, accounts_group) tuples.
+    """
+    total = len(accounts)
+    accounts_per_api = total // len(API_URLS)
+    remainder = total % len(API_URLS)
+    
+    distributed = []
+    start_idx = 0
+    
+    for i, api_url in enumerate(API_URLS):
+        # Distribute remainder evenly (first APIs get +1 account if remainder exists)
+        group_size = accounts_per_api + (1 if i < remainder else 0)
+        end_idx = start_idx + group_size
+        
+        api_name = f"API_{i + 1}"
+        accounts_group = accounts[start_idx:end_idx]
+        
+        distributed.append((api_url, api_name, accounts_group))
+        start_idx = end_idx
+    
+    return distributed
+
+
+async def process_api_batch(session, api_url, api_name, accounts, stats, pause_event, log_collector=None):
+    """
+    Process accounts assigned to a specific API in controlled batches.
+    Returns list of token results.
+    """
+    if not accounts:
+        return []
+    
+    total_accounts = len(accounts)
+    all_results = []
+    
+    if log_collector:
+        log_collector.add(f"🎯 {api_name}: Processing {total_accounts} accounts", "info")
+    
+    # Process in batches to avoid overwhelming the API
+    for batch_idx in range(0, total_accounts, BATCH_SIZE):
+        batch = accounts[batch_idx:batch_idx + BATCH_SIZE]
+        batch_num = (batch_idx // BATCH_SIZE) + 1
+        total_batches = (total_accounts + BATCH_SIZE - 1) // BATCH_SIZE
+        
+        if log_collector and total_batches > 1:
+            log_collector.add(f"📦 {api_name}: Batch {batch_num}/{total_batches} ({len(batch)} accounts)", "info")
+        
+        # Create tasks for this batch with per-API concurrency limit
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_PER_API)
+        
+        async def bounded_fetch(acc):
+            async with semaphore:
+                return await fetch_token_with_timeout(
+                    session, acc["uid"], acc["password"], 
+                    api_url, api_name, stats, pause_event, log_collector
+                )
+        
+        tasks = [bounded_fetch(acc) for acc in batch]
+        batch_results = await asyncio.gather(*tasks)
+        all_results.extend(batch_results)
+        
+        # Add delay between batches (except for last batch)
+        if batch_idx + BATCH_SIZE < total_accounts:
+            if log_collector:
+                log_collector.add(f"⏸️ {api_name}: Waiting {BATCH_DELAY}s before next batch...", "info")
+            await asyncio.sleep(BATCH_DELAY)
+    
+    successful = sum(1 for r in all_results if r is not None)
+    if log_collector:
+        log_collector.add(f"✅ {api_name}: Complete - {successful}/{total_accounts} tokens", "success")
+    
+    return all_results
+
+
+async def fetch_token(session, uid, password, api_url, api_name, stats, pause_event, log_collector=None):
+    """
+    Fetches a single JWT token using the ASSIGNED API only (no fallback).
+    Each account is sticky to one API to distribute load evenly.
+    """
     encoded_uid = urllib.parse.quote(str(uid))
     encoded_password = urllib.parse.quote(password)
-    api_index = 0
+    url = api_url.format(uid=encoded_uid, password=encoded_password)
     start_time = time.time()
     
     for attempt in range(MAX_RETRIES):
@@ -117,9 +199,6 @@ async def fetch_token(session, uid, password, stats, pause_event, log_collector=
                 delay = base_delay + random.uniform(0, 5)
                 await asyncio.sleep(delay)
             
-            url = API_URLS[api_index].format(uid=encoded_uid, password=encoded_password)
-            api_name = f"API_{api_index + 1}"
-            
             async with session.get(url, ssl=False, timeout=30) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -127,17 +206,19 @@ async def fetch_token(session, uid, password, stats, pause_event, log_collector=
                     if token:
                         stats['success'] += 1
                         stats['completed'] += 1
-                        if api_index > 0:
-                            stats.setdefault('api_usage', {})
-                            stats['api_usage'][api_name] = stats['api_usage'].get(api_name, 0) + 1
+                        # Track which API was used
+                        stats.setdefault('api_usage', {})
+                        stats['api_usage'][api_name] = stats['api_usage'].get(api_name, 0) + 1
                         return {"token": token}
                     else:
-                        api_index = (api_index + 1) % len(API_URLS)
+                        if log_collector and attempt == 0:
+                            log_collector.add(f"⚠️ {api_name}: Token missing for {uid}", "warning")
                 
                 elif resp.status == 429:
                     if log_collector and attempt == 0:
-                        log_collector.add(f"⚠️ Rate limit (429) on {uid} - pausing 5 seconds", "warning")
+                        log_collector.add(f"⚠️ {api_name}: Rate limit for {uid} - will retry", "warning")
                     
+                    # Coordinate pause if needed
                     rate_limit_manager = stats.get('rate_limit_manager')
                     if rate_limit_manager:
                         is_first = await rate_limit_manager.handle_rate_limit(uid)
@@ -150,31 +231,27 @@ async def fetch_token(session, uid, password, stats, pause_event, log_collector=
                             if pause_event.is_set():
                                 await pause_event.wait()
                                 await asyncio.sleep(0.1)
-                    
-                    api_index = (api_index + 1) % len(API_URLS)
+                
                 elif resp.status == 500:
                     if log_collector and attempt == 0:
-                        log_collector.add(f"🔥 Server error (500) on {uid} - retrying...", "warning")
-                    api_index = (api_index + 1) % len(API_URLS)
+                        log_collector.add(f"🔥 {api_name}: Server error for {uid}", "warning")
                 else:
                     if log_collector and attempt == 0:
-                        log_collector.add(f"❓ Unexpected status {resp.status} for {uid}", "warning")
-                    api_index = (api_index + 1) % len(API_URLS)
+                        log_collector.add(f"❓ {api_name}: Status {resp.status} for {uid}", "warning")
         
         except (aiohttp.ClientConnectorError, asyncio.TimeoutError, json.JSONDecodeError, Exception) as e:
             if log_collector and attempt == 0:
-                log_collector.add(f"🔌 Connection error for {uid}: {type(e).__name__}", "warning")
-            api_index = (api_index + 1) % len(API_URLS)
+                log_collector.add(f"🔌 {api_name}: {type(e).__name__} for {uid}", "warning")
         
         if attempt == MAX_RETRIES - 1:
             break
     
     elapsed = time.time() - start_time
     if elapsed > 120 and log_collector:
-        log_collector.add(f"🐌 Slow account {uid}: {elapsed:.1f}s", "warning")
+        log_collector.add(f"🐌 {api_name}: Slow account {uid}: {elapsed:.1f}s", "warning")
     
     if log_collector:
-        log_collector.add(f"❌ Failed to fetch token for {uid} after {MAX_RETRIES} attempts", "error")
+        log_collector.add(f"❌ {api_name}: Failed {uid} after {MAX_RETRIES} attempts", "error")
     
     stats['failed'] += 1
     stats['completed'] += 1
@@ -247,7 +324,10 @@ async def push_to_github(session, filename, content, log_collector=None):
 
 
 async def process_region(session, account_filepath, stats, log_collector=None):
-    """Process a single region's accounts."""
+    """
+    Process a single region's accounts using PARALLEL API distribution.
+    Accounts are split evenly across all 3 APIs and processed simultaneously.
+    """
     try:
         region = account_filepath.stem.split('_')[-1].lower()
     except IndexError:
@@ -271,7 +351,14 @@ async def process_region(session, account_filepath, stats, log_collector=None):
         return None
     
     if log_collector:
-        log_collector.add(f"🔑 Starting {region.upper()} - {total} accounts", "info")
+        log_collector.add(f"🔑 Starting {region.upper()} - {total} accounts across {len(API_URLS)} APIs", "info")
+    
+    # Distribute accounts across APIs
+    api_distribution = distribute_accounts_across_apis(valid_accounts)
+    
+    for api_url, api_name, accounts_group in api_distribution:
+        if log_collector:
+            log_collector.add(f"📊 {api_name}: Assigned {len(accounts_group)} accounts", "info")
     
     stats['current_region'] = region.upper()
     stats['total'] = total
@@ -303,16 +390,22 @@ async def process_region(session, account_filepath, stats, log_collector=None):
 
     progress_task = asyncio.create_task(track_progress())
     
-    tasks = [
-        fetch_token_with_timeout(session, acc["uid"], acc["password"], stats, pause_event, log_collector, timeout=180)
-        for acc in valid_accounts
+    # Process all APIs in parallel
+    api_tasks = [
+        process_api_batch(session, api_url, api_name, accounts_group, stats, pause_event, log_collector)
+        for api_url, api_name, accounts_group in api_distribution
     ]
     
     try:
-        results = await asyncio.wait_for(
-            asyncio.gather(*tasks),
+        # All 3 APIs work simultaneously with 20-minute overall timeout
+        api_results = await asyncio.wait_for(
+            asyncio.gather(*api_tasks),
             timeout=1200
         )
+        # Flatten results from all APIs
+        results = []
+        for api_result in api_results:
+            results.extend(api_result)
     except asyncio.TimeoutError:
         if log_collector:
             log_collector.add(f"⏱️ {region.upper()} batch timeout after 20 minutes", "error")
@@ -328,6 +421,11 @@ async def process_region(session, account_filepath, stats, log_collector=None):
     duration = time.time() - start_time
     valid_tokens = [r for r in results if r is not None]
     timed_out_count = stats.get('timed_out', 0)
+    
+    # Log API usage stats
+    if 'api_usage' in stats and stats['api_usage'] and log_collector:
+        for api_name, count in sorted(stats['api_usage'].items()):
+            log_collector.add(f"📈 {api_name}: {count} successful tokens", "info")
     
     # Save locally
     TOKENS_DIR.mkdir(parents=True, exist_ok=True)
@@ -388,7 +486,8 @@ async def run_token_fetch(log_collector=None, stats=None, on_region_complete=Non
         stats.clear() # Reset stats for new run
     start_time = time.time()
     
-    connector = aiohttp.TCPConnector(limit=MAX_CONCURRENT_REQUESTS, ssl=False)
+    # Total concurrent connections: 3 APIs * 30 per API = 90, set limit to 100 for safety
+    connector = aiohttp.TCPConnector(limit=100, ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
         for filepath in account_files:
             region_result = await process_region(session, filepath, stats, log_collector)

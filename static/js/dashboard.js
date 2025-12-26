@@ -116,7 +116,10 @@ const elements = {
     failedCount: document.getElementById('failed-count'),
     speedMetric: document.getElementById('speed-metric'),
     logContainer: document.getElementById('log-container'),
-    historyTbody: document.getElementById('history-tbody')
+    historyTbody: document.getElementById('history-tbody'),
+    api1Count: document.getElementById('api-1-count'),
+    api2Count: document.getElementById('api-2-count'),
+    api3Count: document.getElementById('api-3-count')
 };
 
 /* ==================== STATUS MANAGEMENT ==================== */
@@ -195,9 +198,25 @@ function updateProgress(stats) {
         const speed = calculateSpeed(stats.completed, state.startTime);
         elements.speedMetric.textContent = speed;
     }
+
+    // Update API distribution stats
+    if (stats.api_usage) {
+        elements.api1Count.textContent = stats.api_usage.API_1 || 0;
+        elements.api2Count.textContent = stats.api_usage.API_2 || 0;
+        elements.api3Count.textContent = stats.api_usage.API_3 || 0;
+    } else {
+        // Reset to dashes when no data
+        elements.api1Count.textContent = '-';
+        elements.api2Count.textContent = '-';
+        elements.api3Count.textContent = '-';
+    }
 }
 
 /* ==================== LOG MANAGEMENT ==================== */
+
+function clearLogs() {
+    elements.logContainer.innerHTML = '<div class="italic" style="color: var(--text-muted);">Establishing secure connection...</div>';
+}
 
 function addLog(log) {
     // Handle special progress logs
@@ -351,14 +370,23 @@ async function pollStatus() {
 }
 
 function handleStatusTransition() {
-    // If transitioned from running to completed/idle, refresh history
+    // If transitioned from running to completed/idle, refresh history and clear logs
     if (state.previousStatus === 'running' && state.currentStatus !== 'running') {
         pollHistory();
         stopLogPolling();
+        
+        // Clear logs after execution ends (ephemeral logs)
+        setTimeout(() => {
+            clearLogs();
+            console.log('🧹 Logs cleared - execution ended');
+        }, 3000); // Wait 3 seconds to show final messages
     }
 
     // If transitioned to running, start log polling if not using SSE
     if (state.currentStatus === 'running' && state.previousStatus !== 'running') {
+        // Clear logs when new execution starts
+        clearLogs();
+        
         if (!state.eventSource) {
             startLogPolling();
         }
@@ -393,18 +421,39 @@ async function pollHistory() {
 
 async function triggerRun() {
     try {
-        const response = await fetch('/api/run', { method: 'POST' });
+        // Get auth token from prompt
+        const token = prompt('Enter authentication token (set in Vercel as RUN_SECRET_TOKEN):');
+        if (!token) {
+            addLog({
+                timestamp: new Date().toLocaleTimeString(),
+                message: '⚠️ Run cancelled - no token provided',
+                level: 'warning'
+            });
+            return;
+        }
+
+        const response = await fetch('/api/run?token=' + encodeURIComponent(token), { 
+            method: 'POST'
+        });
+        
         if (response.ok) {
             addLog({
                 timestamp: new Date().toLocaleTimeString(),
-                message: '🚀 Manual run triggered',
+                message: '🚀 Manual run triggered successfully',
                 level: 'info'
+            });
+        } else {
+            const data = await response.json();
+            addLog({
+                timestamp: new Date().toLocaleTimeString(),
+                message: `❌ ${data.error || 'Failed to trigger run'}: ${data.message || ''}`,
+                level: 'error'
             });
         }
     } catch (error) {
         addLog({
             timestamp: new Date().toLocaleTimeString(),
-            message: '❌ Failed to trigger run',
+            message: '❌ Failed to trigger run: ' + error.message,
             level: 'error'
         });
     }
@@ -480,6 +529,9 @@ function initializeEventListeners() {
 /* ==================== INITIALIZATION ==================== */
 
 function initialize() {
+    // Clear logs on page load (ephemeral logs - don't store in browser)
+    clearLogs();
+    
     // Initial data load
     pollStatus();
     pollHistory();
@@ -494,6 +546,7 @@ function initialize() {
     initializeEventListeners();
 
     console.log('🔥 TSun Dashboard initialized successfully');
+    console.log('📝 Logs are ephemeral - cleared on refresh and after execution');
 }
 
 /* ==================== PAGE LOAD ==================== */

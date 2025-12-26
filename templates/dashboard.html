@@ -57,7 +57,7 @@
 
             <!-- Stats Grid -->
             <section class="fade-in-up"
-                style="animation-delay: 0.2s; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin-bottom: 40px;">
+                style="animation-delay: 0.2s; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px; margin-bottom: 40px;">
                 <div class="glass-card">
                     <h3
                         style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px;">
@@ -85,6 +85,16 @@
                         <span style="font-size: 14px; color: var(--text-muted);">req/sec</span>
                     </div>
                 </div>
+                <div class="glass-card" style="border-color: var(--accent-cyan);">
+                    <h3
+                        style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px;">
+                        API Load Distribution</h3>
+                    <div id="api-distribution" style="font-size: 11px; color: var(--text-muted); line-height: 1.6;">
+                        <div style="margin-bottom: 4px;">🔵 API-1: <span id="api-1-count" style="color: var(--accent-cyan);">-</span></div>
+                        <div style="margin-bottom: 4px;">🟣 API-2: <span id="api-2-count" style="color: var(--accent-purple);">-</span></div>
+                        <div>🟠 API-3: <span id="api-3-count" style="color: var(--primary);">-</span></div>
+                    </div>
+                </div>
             </section>
 
             <!-- Progress Section -->
@@ -94,8 +104,10 @@
                         style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                         <div>
                             <h2 style="font-size: 18px; margin-bottom: 4px;">ACTIVE EXECUTION</h2>
-                            <p style="font-size: 12px; color: var(--text-muted);">PROCESSING: <span id="current-region"
-                                    class="mono" style="color: var(--primary);">INITIALIZING</span></p>
+                            <p style="font-size: 12px; color: var(--text-muted);">
+                                PROCESSING: <span id="current-region" class="mono" style="color: var(--primary);">INITIALIZING</span>
+                                <span style="opacity: 0.6; margin-left: 12px;">⚡ 3 APIs in Parallel</span>
+                            </p>
                         </div>
                         <span id="progress-text" style="font-size: 24px; font-weight: 800;">0%</span>
                     </div>
