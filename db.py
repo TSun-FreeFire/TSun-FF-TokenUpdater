@@ -1,6 +1,6 @@
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -12,7 +12,7 @@ def get_connection():
     if not DATABASE_URL:
         return None
     try:
-        return psycopg2.connect(DATABASE_URL, sslmode='require')
+        return psycopg.connect(DATABASE_URL, autocommit=False)
     except Exception as e:
         print(f"Database connection error: {e}")
         return None
@@ -110,7 +110,7 @@ def get_history(limit=10):
     if not conn:
         return []
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 SELECT r.id, r.run_number, r.started_at, r.completed_at, r.total_duration_seconds as elapsed, r.status
                 FROM runs r
@@ -119,6 +119,9 @@ def get_history(limit=10):
             """, (limit,))
             runs = cur.fetchall()
             
+            # Convert to list of dicts (psycopg3 returns Row objects)
+            runs = [dict(run) for run in runs]
+            
             for run in runs:
                 cur.execute("""
                     SELECT region, total_accounts as total, success_count as success, failed_count as failed, 
@@ -126,7 +129,8 @@ def get_history(limit=10):
                     FROM region_results
                     WHERE run_id = %s
                 """, (run['id'],))
-                run['result'] = {'results': cur.fetchall()}
+                results = cur.fetchall()
+                run['result'] = {'results': [dict(r) for r in results]}
                 # Convert datetime to ISO string for JSON serialization
                 if run['started_at']:
                     run['started_at'] = run['started_at'].isoformat()
