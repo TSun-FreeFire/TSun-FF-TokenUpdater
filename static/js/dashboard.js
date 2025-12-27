@@ -374,7 +374,7 @@ function handleStatusTransition() {
     if (state.previousStatus === 'running' && state.currentStatus !== 'running') {
         pollHistory();
         stopLogPolling();
-        
+
         // Clear logs after execution ends (ephemeral logs)
         setTimeout(() => {
             clearLogs();
@@ -386,7 +386,7 @@ function handleStatusTransition() {
     if (state.currentStatus === 'running' && state.previousStatus !== 'running') {
         // Clear logs when new execution starts
         clearLogs();
-        
+
         if (!state.eventSource) {
             startLogPolling();
         }
@@ -432,10 +432,10 @@ async function triggerRun() {
             return;
         }
 
-        const response = await fetch('/api/run?token=' + encodeURIComponent(token), { 
+        const response = await fetch('/api/run?token=' + encodeURIComponent(token), {
             method: 'POST'
         });
-        
+
         if (response.ok) {
             addLog({
                 timestamp: new Date().toLocaleTimeString(),
@@ -462,9 +462,9 @@ async function triggerRun() {
 /* ==================== SERVER-SENT EVENTS / POLLING ==================== */
 
 function initializeLogStream() {
-    // Try SSE first, fallback to polling for serverless
+    // Try SSE first (only works in local dev), fallback to polling for Render/serverless
     try {
-        state.eventSource = new EventSource('/api/logs');
+        state.eventSource = new EventSource('/api/logs/stream');
 
         state.eventSource.onmessage = function (event) {
             const log = JSON.parse(event.data);
@@ -472,12 +472,20 @@ function initializeLogStream() {
         };
 
         state.eventSource.onerror = function (error) {
-            console.log('SSE not available, switching to polling mode');
+            console.log('SSE not available (expected on Render/Vercel), switching to polling mode');
             state.eventSource.close();
             state.eventSource = null;
-            // Use polling instead
+            // Use polling instead - this is the normal path for Render
             startLogPolling();
         };
+
+        // Also start polling as backup - SSE might connect but not receive on Render
+        setTimeout(() => {
+            if (state.currentStatus === 'running' && !state.logInterval) {
+                console.log('Starting backup polling for logs');
+                startLogPolling();
+            }
+        }, 3000);
     } catch (e) {
         console.log('SSE not supported, using polling mode');
         startLogPolling();
@@ -487,13 +495,11 @@ function initializeLogStream() {
 function startLogPolling() {
     if (state.logInterval) return;
 
+    console.log('📡 Starting log polling (Render/serverless mode)');
     let lastLogCount = 0;
-    state.logInterval = setInterval(async () => {
-        if (state.currentStatus !== 'running') {
-            stopLogPolling();
-            return;
-        }
 
+    // Poll immediately, then continue at interval
+    const pollLogs = async () => {
         try {
             const response = await fetch('/api/logs');
             const data = await response.json();
@@ -506,7 +512,18 @@ function startLogPolling() {
         } catch (error) {
             console.error('Log polling error:', error);
         }
-    }, 2000); // Poll every 2 seconds
+    };
+
+    // Immediate first poll
+    pollLogs();
+
+    state.logInterval = setInterval(async () => {
+        if (state.currentStatus !== 'running') {
+            stopLogPolling();
+            return;
+        }
+        await pollLogs();
+    }, 1000); // Poll every 1 second for more responsive updates
 }
 
 function stopLogPolling() {
@@ -531,7 +548,7 @@ function initializeEventListeners() {
 function initialize() {
     // Clear logs on page load (ephemeral logs - don't store in browser)
     clearLogs();
-    
+
     // Initial data load
     pollStatus();
     pollHistory();

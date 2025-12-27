@@ -302,16 +302,31 @@ def get_status():
 
 
 @app.route('/api/logs')
+def get_logs():
+    """Get recent logs as JSON (for polling-based log updates).
+    Works on all platforms: Vercel, Render, and local.
+    """
+    return jsonify({
+        'logs': job_state['log_collector'].get_recent(100),
+        'status': job_state['status'],
+        'environment': 'render' if IS_RENDER else ('serverless' if IS_SERVERLESS else 'local')
+    })
+
+
+@app.route('/api/logs/stream')
 def stream_logs():
-    """Server-Sent Events endpoint for log streaming."""
-    if IS_SERVERLESS:
-        # Serverless: return current logs as JSON (no streaming)
+    """Server-Sent Events endpoint for log streaming (local dev only).
+    Note: SSE doesn't work well with gunicorn workers on Render.
+    """
+    # Only allow SSE in local development mode
+    if IS_SERVERLESS or IS_RENDER:
         return jsonify({
-            'logs': job_state['log_collector'].get_recent(100),
-            'message': 'Serverless mode - use polling instead of SSE'
-        })
+            'error': 'SSE not available',
+            'message': 'Use /api/logs endpoint with polling instead',
+            'logs': job_state['log_collector'].get_recent(100)
+        }), 200
     
-    # Local: use SSE streaming
+    # Local dev: use SSE streaming
     def generate():
         last_count = 0
         while True:
